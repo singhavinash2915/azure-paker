@@ -1,0 +1,134 @@
+trigger:
+  none
+
+######################
+# Declare Parameters:-
+######################
+# parameters: 
+# - name: KVName
+#   displayName: Please Provide the Keyvault Name:-
+#   type: object
+#   default: ampockv
+#   values:
+#   - ampockv
+
+######################
+#DECLARE VARIABLES:-
+######################
+parameters:
+- name: OS
+  type: string
+  values: 
+  - Windows
+  - RHEL
+  - Ubuntu
+
+variables:
+- name:  ServiceConnection
+  value: HUB-NPRD-AUTOMATION
+- name:  packerfile
+  ${{ if eq(parameters.OS , 'Windows')}}:
+    value: '$(Build.SourcesDirectory)/packer/windows-template.pkr.hcl'
+  ${{ if eq(parameters.OS , 'RHEL')}}:
+    value: '$(Build.SourcesDirectory)/packer/rhel-template.pkr.hcl'       
+  ${{ if eq(parameters.OS , 'Ubuntu')}}:
+    value: '$(Build.SourcesDirectory)/packer/ubuntu-template.pkr.hcl'     
+- name:  subsId
+  value: 11095b56-affe-457f-a17a-8027dcd56f20
+
+
+
+#########################
+# Declare Build Agents:-
+#########################
+pool:
+  #vmImage: $(BuildAgent)  
+  vmImage : 'ubuntu-latest'
+  #vmImage : 'Ubuntu-22.04'
+
+
+###################
+# Declare Stages:-
+###################
+
+stages:
+
+- stage: BUILD_IMAGE_PACKER 
+  jobs:
+  - job: BUILD_IMAGE_PACKER 
+    displayName: BUILD IMAGE PACKER
+    steps:
+    - script: |
+          sudo apt update
+          wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt update && sudo apt install packer  
+          packer --version    
+      name: install
+      displayName: Install Packer CLI
+
+####################################
+# Build Windows Image with Packer:-
+####################################
+    - task: AzureCLI@2
+      displayName: Build Image With Packer
+      inputs:
+        azureSubscription: $(ServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          # Explicitly disable all other auth methods
+          export ARM_USE_MSI=false
+          export ARM_USE_CLI=false
+          
+          # Set service principal credentials
+          export ARM_CLIENT_ID=$servicePrincipalId
+          export ARM_CLIENT_SECRET=$servicePrincipalKey
+          export ARM_TENANT_ID=$tenantId
+          export ARM_SUBSCRIPTION_ID="$(subsId)"
+          # Verify credentials
+          echo "Client ID: $servicePrincipalId"
+          echo "Subscription ID: $(subsId)"          
+          az account set -s $(subscriptionId)
+          az account show
+          az account list --output table        
+          #packer
+          packer plugins install github.com/hashicorp/azure
+          case "${{ parameters.OS }}" in
+            Windows)
+              packer build -debug \
+                -var "client_id=$servicePrincipalId" \
+                -var "client_secret=$servicePrincipalKey" \
+                -var "subscription_id=$(subsId)" \
+                -var "tenant_id=$tenantId" \
+                -on-error=abort \
+                -force \
+                $(packerfile)
+              ;;
+            RHEL)
+              packer build -debug \
+                -var "client_id=$servicePrincipalId" \
+                -var "client_secret=$servicePrincipalKey" \
+                -var "subscription_id=$(subsId)" \
+                -var "tenant_id=$tenantId" \
+                -on-error=abort \
+                -force \
+                $(packerfile)
+              ;;
+            Ubuntu)
+              packer build -debug \
+                -var "client_id=$servicePrincipalId" \
+                -var "client_secret=$servicePrincipalKey" \
+                -var "subscription_id=$(subsId)" \
+                -var "tenant_id=$tenantId" \
+                -on-error=abort \
+                -force \
+                $(packerfile)
+              ;;
+            *)
+              echo "Unsupported OS: ${{ parameters.OS }}"
+              exit 1
+              ;;
+          esac
+        addSpnToEnvironment: true
+          
